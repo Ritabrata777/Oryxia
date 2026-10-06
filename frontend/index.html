@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORYXIA | Clinical Telemetry & Ischemia Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            border-radius: 0px !important;
+        }
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            margin: 0;
+            padding: 16px;
+        }
+        .border-stark {
+            border: 1px solid #333333;
+        }
+        .border-stark-white {
+            border: 1px solid #ffffff;
+        }
+        .bg-stark-black {
+            background-color: #050505;
+        }
+        .bg-pure-black {
+            background-color: #000000;
+        }
+        .btn-stark {
+            background-color: #ffffff;
+            color: #000000;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 6px 14px;
+            border: 1px solid #ffffff;
+            transition: all 0.1s ease;
+            cursor: pointer;
+        }
+        .btn-stark:hover {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        .btn-stark-inverted {
+            background-color: #000000;
+            color: #ffffff;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 6px 14px;
+            border: 1px solid #555555;
+            transition: all 0.1s ease;
+            cursor: pointer;
+        }
+        .btn-stark-inverted:hover {
+            border-color: #ffffff;
+            background-color: #111111;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            background: #000000;
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #000000;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333333;
+        }
+    </style>
+</head>
+<body class="max-w-7xl mx-auto flex flex-col min-h-screen space-y-6">
+
+    <!-- Top Command & Telemetry Status Bar -->
+    <header class="border-stark p-4 bg-pure-black flex flex-wrap items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <span class="inline-block w-2.5 h-2.5 bg-white animate-pulse"></span>
+                <h1 class="text-lg md:text-xl font-bold tracking-widest uppercase">
+                    ORYXIA <span class="font-normal text-neutral-400">| CLINICAL TELEMETRY ANALYZER</span>
+                </h1>
+            </div>
+            <p class="text-[11px] text-neutral-400 mt-1 uppercase tracking-wider">
+                AD8232 ECG (250 Hz) · MAX30102 PPG/SpO2 (100 Hz) · Pass 1 Quality Gate (&ge;70%) · meta/muse-glimmer-30b
+            </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5 text-xs">
+            <!-- Hardware / Wi-Fi IP Configuration -->
+            <div class="flex items-center border border-neutral-700 bg-pure-black px-2 py-1">
+                <span class="text-neutral-400 mr-2 uppercase">ESP32 IP:</span>
+                <input id="wifi-ip-input" type="text" value="http://oryxia-ecg.local" class="bg-black text-white px-2 py-0.5 border border-neutral-800 w-44 text-xs font-mono focus:outline-none focus:border-white">
+                <button onclick="saveWifiUrl()" class="ml-2 px-2 py-0.5 bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-700 font-bold uppercase text-[10px]">Set</button>
+            </div>
+
+            <span id="conn-badge" class="px-2.5 py-1 text-[11px] font-bold border border-neutral-700 text-neutral-300 uppercase">WebSocket: Connecting</span>
+
+            <button id="stream-btn" onclick="toggleStream()" class="btn-stark text-xs flex items-center gap-2">
+                <span>▶</span> <span id="stream-label">Start Session</span>
+            </button>
+
+            <!-- Send to LLM Action Button -->
+            <button id="send-llm-btn" onclick="sendToLlm()" class="btn-stark text-xs flex items-center gap-2">
+                <span>🚀</span> <span id="send-llm-label">Send to LLM</span>
+            </button>
+
+            <!-- Download Full Session CSV Button -->
+            <button onclick="downloadSessionCsv()" class="btn-stark-inverted text-xs flex items-center gap-1.5" title="Download entire accumulated telemetry CSV">
+                <span>📥</span> <span>Download CSV</span>
+            </button>
+
+            <!-- Download AI Clinical Report Button -->
+            <button id="download-report-btn-top" onclick="downloadAiReport()" class="btn-stark-inverted text-xs flex items-center gap-1.5" title="Download AI Clinical Diagnostic Report">
+                <span>📄</span> <span>Download Report</span>
+            </button>
+
+            <span id="llm-buffer-badge" class="px-2.5 py-1 text-[11px] font-bold border border-neutral-700 bg-neutral-950 text-white">Buffer: 0 Chunks (0.0s)</span>
+
+            <button onclick="clearSession()" class="btn-stark-inverted text-xs uppercase">
+                Clear
+            </button>
+        </div>
+    </header>
+
+    <!-- LIVE TELEMETRY OSCILLOSCOPES (ECG + MAX30102 PPG & FINGER PLACEMENT) -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        <!-- TRACE 1: LIVE CONTINUOUS ECG OSCILLOSCOPE (AD8232) -->
+        <div class="border-stark bg-pure-black p-4 space-y-3">
+            <div class="flex items-center justify-between border-b border-neutral-800 pb-2">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 bg-white"></span>
+                    <h2 class="text-xs font-bold uppercase tracking-wider">Trace 1: Real-Time ECG (AD8232 · 250 Hz)</h2>
+                </div>
+                <div class="flex items-center gap-3 text-xs">
+                    <span id="lead_status" class="text-neutral-400">Leads: OK</span>
+                    <span class="px-2 py-0.5 border border-neutral-700 text-[10px] uppercase font-bold">50Hz Notch Active</span>
+                </div>
+            </div>
+
+            <!-- ECG Live Canvas -->
+            <div class="border border-neutral-800 relative bg-black">
+                <canvas id="ecg-canvas" height="180"></canvas>
+            </div>
+
+            <!-- ECG Live Metrics Bar -->
+            <div class="grid grid-cols-4 gap-2 text-xs border border-neutral-800 p-2.5 bg-stark-black">
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">ECG HR</div>
+                    <div id="live-ecg-hr" class="text-lg font-bold font-mono">-- BPM</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Signal Quality</div>
+                    <div id="live-sqi" class="text-lg font-bold font-mono">-- %</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Motion / G</div>
+                    <div id="live-motion" class="text-lg font-bold font-mono">1.00 g</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Tilt (P/R)</div>
+                    <div id="live-tilt" class="text-lg font-bold font-mono">0° / 0°</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TRACE 2: LIVE CONTINUOUS PPG / PULSE OSCILLOSCOPE (MAX30102) & FINGER PLACEMENT -->
+        <div class="border-stark bg-pure-black p-4 space-y-3">
+            <div class="flex items-center justify-between border-b border-neutral-800 pb-2">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 bg-white"></span>
+                    <h2 class="text-xs font-bold uppercase tracking-wider">Trace 2: Optical PPG &amp; SpO2 (MAX30102 · 100 Hz)</h2>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                    <span id="finger-status-badge" class="px-2 py-0.5 border border-neutral-600 font-bold uppercase text-[10px] bg-neutral-900 text-neutral-300">
+                        Checking Finger Contact...
+                    </span>
+                </div>
+            </div>
+
+            <!-- PPG Pulse Live Canvas -->
+            <div class="border border-neutral-800 relative bg-black">
+                <canvas id="ppg-canvas" height="180"></canvas>
+            </div>
+
+            <!-- Optical Sensor Metrics & Finger Placement Gauge -->
+            <div class="grid grid-cols-4 gap-2 text-xs border border-neutral-800 p-2.5 bg-stark-black">
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Real SpO2</div>
+                    <div id="live-spo2" class="text-lg font-bold font-mono text-white">-- %</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Optical Pulse HR</div>
+                    <div id="live-ppg-hr" class="text-lg font-bold font-mono text-white">-- BPM</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">IR Contact DC</div>
+                    <div id="live-dc-ir" class="text-lg font-bold font-mono text-white">--</div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-neutral-500 uppercase">Pulse Amplitude</div>
+                    <div id="live-amp-ir" class="text-lg font-bold font-mono text-white">-- counts</div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- SECTION 1: NVIDIA meta/muse-glimmer-30b AI CLINICAL REPORT -->
+    <section class="border-stark bg-pure-black p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between border-b border-neutral-800 pb-3 gap-3">
+            <div class="flex items-center gap-2">
+                <span class="text-sm">■</span>
+                <h2 class="text-sm font-bold uppercase tracking-wider text-white">
+                    SECTION 1: NVIDIA meta/muse-glimmer-30b AI Clinical Report
+                </h2>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span id="buffer-status-detail" class="text-neutral-400 mr-2">Buffer: 0 passing chunks (0.0s telemetry)</span>
+                <button onclick="sendToLlm()" class="btn-stark text-xs uppercase">
+                    🚀 Run Analysis on Buffer
+                </button>
+                <button onclick="downloadSessionCsv()" class="btn-stark-inverted text-xs uppercase">
+                    📥 Download CSV
+                </button>
+                <button onclick="downloadAiReport()" class="btn-stark-inverted text-xs uppercase">
+                    📄 Download AI Report
+                </button>
+            </div>
+        </div>
+
+        <!-- Single Clinical Dossier Display Area -->
+        <div id="ai-report-container">
+            <div id="ai-empty-state" class="py-12 text-center border border-neutral-800 bg-stark-black space-y-2">
+                <div class="text-base font-bold uppercase tracking-widest text-neutral-300">Ready for Session Telemetry Analysis</div>
+                <p class="text-xs text-neutral-500 max-w-xl mx-auto">
+                    Continuous 3-second ECG windows (&ge;70% clean) are accumulated in the session buffer. Click <b>[🚀 SEND TO LLM]</b> when ready to evaluate the full multi-window dataset with NVIDIA meta/muse-glimmer-30b.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 2: 3-SECOND PREPROCESSED ECG STRIP GRAPHS (ALL CHUNKS PLOTTED CONTINUOUSLY) -->
+    <section class="border-stark bg-pure-black p-5 space-y-4">
+        <div class="flex items-center justify-between border-b border-neutral-800 pb-3">
+            <div class="flex items-center gap-2">
+                <span class="text-sm">■</span>
+                <h2 class="text-sm font-bold uppercase tracking-wider text-white">
+                    SECTION 2: 3-Second Preprocessed ECG Strip Graphs &amp; Pass 1 Quality Audit
+                </h2>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-neutral-400">
+                <span>Pass 1 Quality Gate: &ge;70% Clean</span>
+                <span id="total-strips-counter">Strips Plotted: 0</span>
+            </div>
+        </div>
+
+        <div id="ecg-graphs-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="graphs-empty-state" class="col-span-full py-12 text-center border border-neutral-800 bg-stark-black">
+                <div class="text-sm font-bold uppercase text-neutral-400">Awaiting Telemetry Stream...</div>
+                <p class="text-xs text-neutral-600 mt-1">Every 3-second window will be preprocessed, calibrated, and plotted here in real-time.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Core Script -->
+    <script>
+        let ws = null;
+        let isStreaming = false;
+        let totalStrips = 0;
+        let sessionBufferCount = 0;
+        let latestFormattedReportText = "";
+
+        // Waveform history buffers for live oscilloscope render
+        const ecgPoints = [];
+        const ppgPoints = [];
+        const MAX_ECG_POINTS = 300; // ~1.2 seconds of live trace
+        const MAX_PPG_POINTS = 150;
+
+        const ecgCanvas = document.getElementById("ecg-canvas");
+        const ecgCtx = ecgCanvas.getContext("2d");
+        const ppgCanvas = document.getElementById("ppg-canvas");
+        const ppgCtx = ppgCanvas.getContext("2d");
+
+        function setupCanvasSize(c, cx) {
+            const rect = c.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            c.width = Math.floor(rect.width * dpr);
+            c.height = Math.floor(180 * dpr);
+            cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function drawMedicalGrid(cx, w, h) {
+            cx.clearRect(0, 0, w, h);
+            cx.strokeStyle = "#141414";
+            cx.lineWidth = 1;
+            const stepX = w / 20;
+            const stepY = h / 10;
+            cx.beginPath();
+            for (let x = 0; x <= w; x += stepX) {
+                cx.moveTo(x, 0); cx.lineTo(x, h);
+            }
+            for (let y = 0; y <= h; y += stepY) {
+                cx.moveTo(0, y); cx.lineTo(w, y);
+            }
+            cx.stroke();
+        }
+
+        function drawTrace(cx, c, data, color) {
+            const w = c.clientWidth;
+            const h = c.clientHeight || 180;
+            if (!w || !h) return;
+
+            drawMedicalGrid(cx, w, h);
+            if (data.length < 2) return;
+
+            let min = Math.min(...data);
+            let max = Math.max(...data);
+            if (max - min < 20) { min -= 10; max += 10; }
+            const padding = (max - min) * 0.15;
+            min -= padding;
+            max += padding;
+
+            cx.strokeStyle = color;
+            cx.lineWidth = 1.75;
+            cx.beginPath();
+            data.forEach((val, i) => {
+                const x = (i / (data.length - 1)) * w;
+                const y = h - ((val - min) / (max - min)) * h;
+                if (i === 0) cx.moveTo(x, y);
+                else cx.lineTo(x, y);
+            });
+            cx.stroke();
+        }
+
+        function renderOscilloscopes() {
+            drawTrace(ecgCtx, ecgCanvas, ecgPoints, "#ffffff");
+            drawTrace(ppgCtx, ppgCanvas, ppgPoints, "#ffffff");
+        }
+
+        window.addEventListener("resize", () => {
+            setupCanvasSize(ecgCanvas, ecgCtx);
+            setupCanvasSize(ppgCanvas, ppgCtx);
+            renderOscilloscopes();
+        });
+
+        async function saveWifiUrl() {
+            const url = document.getElementById("wifi-ip-input").value;
+            try {
+                const res = await fetch("/api/config/wifi", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: url })
+                });
+                const data = await res.json();
+                if (data.status === "updated") {
+                    alert("Updated ESP32 Target URL to: " + data.esp_wifi_url);
+                }
+            } catch (e) {
+                alert("Error setting Wi-Fi IP: " + e);
+            }
+        }
+
+        function initWebSocket() {
+            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                const badge = document.getElementById("conn-badge");
+                badge.innerText = "WebSocket: Online";
+                badge.className = "px-2.5 py-1 text-[11px] font-bold border border-white bg-white text-black uppercase";
+            };
+
+            ws.onclose = () => {
+                const badge = document.getElementById("conn-badge");
+                badge.innerText = "WebSocket: Offline";
+                badge.className = "px-2.5 py-1 text-[11px] font-bold border border-red-500 text-red-500 uppercase";
+                setTimeout(initWebSocket, 2000);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === "ecg") {
+                        // 1. Live ECG samples
+                        if (data.filtered_samples) {
+                            for (const val of data.filtered_samples) {
+                                ecgPoints.push(val);
+                                if (ecgPoints.length > MAX_ECG_POINTS) ecgPoints.shift();
+                            }
+                        }
+
+                        // 2. Live PPG / IR samples
+                        if (data.ir_samples) {
+                            for (const val of data.ir_samples) {
+                                const displayVal = data.finger_detected ? val : 0;
+                                ppgPoints.push(displayVal);
+                                if (ppgPoints.length > MAX_PPG_POINTS) ppgPoints.shift();
+                            }
+                        }
+
+                        renderOscilloscopes();
+
+                        // 3. Update Live Vitals & Contact status
+                        if (data.ecg_hr > 0) document.getElementById("live-ecg-hr").innerText = Math.round(data.ecg_hr) + " BPM";
+                        else if (data.hr > 0) document.getElementById("live-ecg-hr").innerText = Math.round(data.hr) + " BPM";
+
+                        if (data.chance_good_data !== undefined) {
+                            document.getElementById("live-sqi").innerText = Math.round(data.chance_good_data) + "%";
+                        }
+                        if (data.motion !== undefined) {
+                            document.getElementById("live-motion").innerText = data.motion.toFixed(2) + " g";
+                        }
+                        if (data.pitch !== undefined && data.roll !== undefined) {
+                            document.getElementById("live-tilt").innerText = `${Math.round(data.pitch)}° / ${Math.round(data.roll)}°`;
+                        }
+
+                        // PPG & Optical Heartbeat / SpO2 metrics (active ONLY when finger placed)
+                        if (data.finger_detected && data.spo2 > 0) {
+                            document.getElementById("live-spo2").innerText = Math.round(data.spo2) + " %";
+                        } else {
+                            document.getElementById("live-spo2").innerText = "-- %";
+                        }
+
+                        if (data.finger_detected && data.hr > 0) {
+                            document.getElementById("live-ppg-hr").innerText = Math.round(data.hr) + " BPM";
+                        } else {
+                            document.getElementById("live-ppg-hr").innerText = "-- BPM";
+                        }
+
+                        if (data.finger_detected && data.dc_ir !== undefined) {
+                            document.getElementById("live-dc-ir").innerText = Math.round(data.dc_ir);
+                        } else {
+                            document.getElementById("live-dc-ir").innerText = "--";
+                        }
+
+                        if (data.finger_detected && data.amp_ir !== undefined) {
+                            document.getElementById("live-amp-ir").innerText = Math.round(data.amp_ir) + " cnt";
+                        } else {
+                            document.getElementById("live-amp-ir").innerText = "-- cnt";
+                        }
+
+                        // Finger contact badge
+                        const fBadge = document.getElementById("finger-status-badge");
+                        if (data.finger_detected) {
+                            fBadge.innerText = "● Finger Contact: Stable";
+                            fBadge.className = "px-2 py-0.5 border border-white font-bold uppercase text-[10px] bg-white text-black";
+                        } else {
+                            fBadge.innerText = "○ Place Finger Flat on Sensor";
+                            fBadge.className = "px-2 py-0.5 border border-neutral-700 font-bold uppercase text-[10px] bg-black text-neutral-400";
+                        }
+
+                    } else if (data.type === "chunk_result") {
+                        // 3-Second Window Evaluated
+                        totalStrips++;
+                        document.getElementById("total-strips-counter").innerText = `Strips Plotted: ${totalStrips}`;
+
+                        if (data.session_buffer_count !== undefined) {
+                            sessionBufferCount = data.session_buffer_count;
+                            const bSec = (sessionBufferCount * 3.0).toFixed(1);
+                            document.getElementById("llm-buffer-badge").innerText = `Buffer: ${sessionBufferCount} Chunks (${bSec}s)`;
+                            document.getElementById("buffer-status-detail").innerText = `Buffer: ${sessionBufferCount} passing chunks (${bSec}s telemetry)`;
+                        }
+
+                        // Plot Strip Graph to Section 2 (Unconditional for all chunks)
+                        renderGraphCard(data);
+
+                        // If this chunk contains an LLM clinical response (from Send to LLM), render report in Section 1!
+                        if (data.glm_result && Object.keys(data.glm_result).length > 0) {
+                            renderLlmClinicalReport(data);
+                        }
+                    }
+                } catch (e) {
+                    console.error("WS Parse Error", e);
+                }
+            };
+        }
+
+        async function toggleStream() {
+            const btnLabel = document.getElementById("stream-label");
+            const btnIcon = document.getElementById("stream-icon");
+            const endpoint = isStreaming ? "/api/stream/stop" : "/api/stream/start";
+
+            try {
+                const res = await fetch(endpoint, { method: "POST" });
+                const data = await res.json();
+
+                if (data.status === "streaming" || data.status === "started") {
+                    isStreaming = true;
+                    btnLabel.innerText = "Stop Session";
+                    btnIcon.innerText = "⏹";
+                } else {
+                    isStreaming = false;
+                    btnLabel.innerText = "Start Session";
+                    btnIcon.innerText = "▶";
+                }
+            } catch (e) {
+                alert("Stream Toggle Failed: " + e);
+            }
+        }
+
+        async function sendToLlm() {
+            const btn = document.getElementById("send-llm-btn");
+            const btnLabel = document.getElementById("send-llm-label");
+            if (btn) btn.disabled = true;
+            if (btnLabel) btnLabel.innerText = "Analyzing with meta/muse-glimmer-30b...";
+
+            const container = document.getElementById("ai-report-container");
+            container.innerHTML = `
+                <div class="py-8 text-center border border-white bg-stark-black space-y-3">
+                    <div class="inline-block w-4 h-4 border-2 border-white border-t-transparent animate-spin"></div>
+                    <div class="text-xs font-bold uppercase tracking-widest text-white">Transmitting Accumulated Telemetry to meta/muse-glimmer-30b...</div>
+                    <p class="text-[11px] text-neutral-400">Evaluating calibrated PR baseline, ST-segment deviations, T-wave morphology, and rhythm consistency.</p>
+                </div>
+            `;
+
+            try {
+                const res = await fetch("/api/llm/analyze", { method: "POST" });
+                const data = await res.json();
+
+                if (data.status === "analyzing") {
+                    // Poll for completion
+                    pollLlmResult();
+                } else {
+                    container.innerHTML = `
+                        <div class="py-8 text-center border border-red-500 bg-stark-black space-y-2">
+                            <div class="text-sm font-bold uppercase text-red-500">Analysis Request Failed</div>
+                            <p class="text-xs text-neutral-400">${data.error || "Unknown error"}</p>
+                        </div>
+                    `;
+                    if (btn) btn.disabled = false;
+                    if (btnLabel) btnLabel.innerText = "Send to LLM";
+                }
+            } catch (e) {
+                container.innerHTML = `
+                    <div class="py-8 text-center border border-red-500 bg-stark-black space-y-2">
+                        <div class="text-sm font-bold uppercase text-red-500">Network Error</div>
+                        <p class="text-xs text-neutral-400">${e}</p>
+                    </div>
+                `;
+                if (btn) btn.disabled = false;
+                if (btnLabel) btnLabel.innerText = "Send to LLM";
+            }
+        }
+
+        async function pollLlmResult() {
+            const btn = document.getElementById("send-llm-btn");
+            const btnLabel = document.getElementById("send-llm-label");
+
+            const poll = async () => {
+                try {
+                    const res = await fetch("/api/llm/result");
+                    const data = await res.json();
+
+                    if (data.status === "ready" && data.formatted_report) {
+                        latestFormattedReportText = data.formatted_report;
+                        renderLlmClinicalReport({ glm_result: { formatted_report: data.formatted_report } });
+                        if (btn) btn.disabled = false;
+                        if (btnLabel) btnLabel.innerText = "Send to LLM";
+                    } else if (data.status === "processing") {
+                        setTimeout(poll, 1500);
+                    } else {
+                        const container = document.getElementById("ai-report-container");
+                        container.innerHTML = `
+                            <div class="py-8 text-center border border-red-500 bg-stark-black space-y-2">
+                                <div class="text-sm font-bold uppercase text-red-500">Analysis Failed</div>
+                                <p class="text-xs text-neutral-400">${data.error || "Unknown error"}</p>
+                            </div>
+                        `;
+                        if (btn) btn.disabled = false;
+                        if (btnLabel) btnLabel.innerText = "Send to LLM";
+                    }
+                } catch (e) {
+                    setTimeout(poll, 1500);
+                }
+            };
+
+            poll();
+        }
+
+        function renderGraphCard(data) {
+            const graphsGrid = document.getElementById("ecg-graphs-grid");
+            const emptyState = document.getElementById("graphs-empty-state");
+            if (emptyState) emptyState.style.display = "none";
+
+            const card = document.createElement("div");
+            card.className = "border-stark bg-pure-black p-3 space-y-2";
+
+            const chunkId = data.chunk_id || "N/A";
+            const sqi = data.sqi !== undefined ? `${Math.round(data.sqi)}%` : "N/A";
+            const baseline = data.baseline !== undefined ? `${Math.round(data.baseline)} μV` : "N/A";
+            const hr = data.hr !== undefined ? `${Math.round(data.hr)} BPM` : "N/A";
+            const passed = data.passed_quality !== undefined ? (data.passed_quality ? "PASS" : "FAIL") : "N/A";
+
+            const passedClass = data.passed_quality ? "text-green-400" : "text-red-500";
+
+            card.innerHTML = `
+                <div class="flex items-center justify-between border-b border-neutral-800 pb-1">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Chunk ID: ${chunkId}</div>
+                    <div class="text-[10px] font-bold uppercase ${passedClass}">Quality: ${passed}</div>
+                </div>
+                <div class="border border-neutral-800 relative bg-black">
+                    <canvas class="ecg-strip-canvas" height="120"></canvas>
+                </div>
+                <div class="grid grid-cols-4 gap-1 text-[10px]">
+                    <div>
+                        <div class="text-neutral-500 uppercase">SQI</div>
+                        <div class="font-mono font-bold">${sqi}</div>
+                    </div>
+                    <div>
+                        <div class="text-neutral-500 uppercase">Baseline</div>
+                        <div class="font-mono font-bold">${baseline}</div>
+                    </div>
+                    <div>
+                        <div class="text-neutral-500 uppercase">HR</div>
+                        <div class="font-mono font-bold">${hr}</div>
+                    </div>
+                    <div>
+                        <div class="text-neutral-500 uppercase">Lead Status</div>
+                        <div class="font-mono font-bold">OK</div>
+                    </div>
+                </div>
+            `;
+
+            graphsGrid.appendChild(card);
+
+            // Render ECG strip graph on the card's canvas
+            const canvas = card.querySelector(".ecg-strip-canvas");
+            const ctx = canvas.getContext("2d");
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.floor(rect.width * dpr);
+            canvas.height = Math.floor(120 * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const w = canvas.clientWidth;
+            const h = canvas.clientHeight || 120;
+
+            // Draw grid
+            ctx.strokeStyle = "#141414";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            const stepX = w / 15;
+            const stepY = h / 8;
+            for (let x = 0; x <= w; x += stepX) {
+                ctx.moveTo(x, 0); ctx.lineTo(x, h);
+            }
+            for (let y = 0; y <= h; y += stepY) {
+                ctx.moveTo(0, y); ctx.lineTo(w, y);
+            }
+            ctx.stroke();
+
+            // Draw ECG trace
+            if (data.ecg_samples && data.ecg_samples.length > 0) {
+                const ecgData = data.ecg_samples;
+                let min = Math.min(...ecgData);
+                let max = Math.max(...ecgData);
+                if (max - min < 20) { min -= 10; max += 10; }
+                const padding = (max - min) * 0.15;
+                min -= padding;
+                max += padding;
+
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ecgData.forEach((val, i) => {
+                    const x = (i / (ecgData.length - 1)) * w;
+                    const y = h - ((val - min) / (max - min)) * h;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+            }
+        }
+
+        function renderLlmClinicalReport(data) {
+            const container = document.getElementById("ai-report-container");
+            const glmResult = data.glm_result;
+
+            if (!glmResult || !glmResult.formatted_report) {
+                container.innerHTML = `
+                    <div class="py-8 text-center border border-red-500 bg-stark-black space-y-2">
+                        <div class="text-sm font-bold uppercase text-red-500">Clinical Report Not Available</div>
+                        <p class="text-xs text-neutral-400">The LLM response was empty or malformed.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const reportText = glmResult.formatted_report;
+            latestFormattedReportText = reportText;
+
+            // Parse the formatted report into sections
+            const lines = reportText.split("\n").filter(line => line.trim().length > 0);
+            let currentSection = "";
+            const sections = {};
+
+            for (const line of lines) {
+                if (line.startsWith("## ")) {
+                    currentSection = line.substring(3).trim();
+                    sections[currentSection] = [];
+                } else if (currentSection && line.trim()) {
+                    sections[currentSection].push(line.trim());
+                }
+            }
+
+            // Render the report
+            let html = '<div class="space-y-4">';
+
+            for (const [sectionTitle, sectionLines] of Object.entries(sections)) {
+                html += `
+                    <div class="border-stark bg-stark-black p-4 space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white border-b border-neutral-800 pb-2">${sectionTitle}</h3>
+                        <div class="space-y-1">
+                            ${sectionLines.map(line => {
+                                if (line.startsWith("**") && line.endsWith("**")) {
+                                    return `<div class="text-xs font-bold text-white">${line.replace(/\*\*/g, "")}</div>`;
+                                } else if (line.startsWith("- ")) {
+                                    return `<div class="text-xs text-neutral-300 pl-4 border-l-2 border-neutral-700">${line.substring(2)}</div>`;
+                                } else {
+                                    return `<div class="text-xs text-neutral-400">${line}</div>`;
+                                }
+                            }).join("")}
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function downloadSessionCsv() {
+            fetch("/api/export/csv")
+                .then(res => res.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "session_ecg_data.csv";
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(e => alert("CSV Download Failed: " + e));
+        }
+
+        function downloadAiReport() {
+            if (!latestFormattedReportText) {
+                alert("No AI clinical report available yet. Run an analysis first.");
+                return;
+            }
+
+            const blob = new Blob([latestFormattedReportText], { type: "text/markdown" });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "ai_clinical_report.md";
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function clearSession() {
+            if (confirm("Clear the entire session buffer and reset all graphs?")) {
+                totalStrips = 0;
+                sessionBufferCount = 0;
+                latestFormattedReportText = "";
+
+                document.getElementById("total-strips-counter").innerText = "Strips Plotted: 0";
+                document.getElementById("llm-buffer-badge").innerText = "Buffer: 0 Chunks (0.0s)";
+                document.getElementById("buffer-status-detail").innerText = "Buffer: 0 passing chunks (0.0s telemetry)";
+
+                const graphsGrid = document.getElementById("ecg-graphs-grid");
+                graphsGrid.innerHTML = `
+                    <div id="graphs-empty-state" class="col-span-full py-12 text-center border border-neutral-800 bg-stark-black">
+                        <div class="text-sm font-bold uppercase text-neutral-400">Awaiting Telemetry Stream...</div>
+                        <p class="text-xs text-neutral-600 mt-1">Every 3-second window will be preprocessed, calibrated, and plotted here in real-time.</p>
+                    </div>
+                `;
+
+                const aiContainer = document.getElementById("ai-report-container");
+                aiContainer.innerHTML = `
+                    <div id="ai-empty-state" class="py-12 text-center border border-neutral-800 bg-stark-black space-y-2">
+                        <div class="text-base font-bold uppercase tracking-widest text-neutral-300">Ready for Session Telemetry Analysis</div>
+                        <p class="text-xs text-neutral-500 max-w-xl mx-auto">
+                            Continuous 3-second ECG windows (&ge;70% clean) are accumulated in the session buffer. Click <b>[🚀 SEND TO LLM]</b> when ready to evaluate the full multi-window dataset with NVIDIA meta/muse-glimmer-30b.
+                        </p>
+                    </div>
+                `;
+
+                ecgPoints.length = 0;
+                ppgPoints.length = 0;
+                renderOscilloscopes();
+            }
+        }
+
+        // Initialize
+        initWebSocket();
+        setupCanvasSize(ecgCanvas, ecgCtx);
+        setupCanvasSize(ppgCanvas, ppgCtx);
+        renderOscilloscopes();
+    </script>
+</body>
+</html>
