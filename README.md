@@ -22,15 +22,15 @@ Oryxia is designed for continuous ECG monitoring, motion-aware signal quality fi
 
 ```
                     ┌──────────────────────────────────────────────┐
-                    │    BIOMEDICAL HARDWARE SENSING FRONT-END    │
-                    │  AD8232 ECG (1100× Gain) + MPU6050 6-Axis IMU │
+                    │     BIOMEDICAL HARDWARE SENSING FRONT-END    │
+                    │ AD8232 ECG (1100× Gain) + MPU6050 6-Axis IMU │
                     └──────────────────────┬───────────────────────┘
                                            │
                                            ▼
                     ┌──────────────────────────────────────────────┐
                     │      ESP32-S3 FIRMWARE (focused-tesla.ino)   │
-                    │  • Biquad 50Hz Notch Filter + Baseline Drift  │
-                    │  • Wi-Fi STA / HTTP Telemetry Streaming (250Hz)│
+                    │ • Biquad 50Hz Notch Filter + Baseline Drift  │
+                    │• Wi-Fi STA / HTTP Telemetry Streaming (250Hz)│
                     └──────────────────────┬───────────────────────┘
                                            │
                                            ▼ (Wi-Fi / Serial Stream)
